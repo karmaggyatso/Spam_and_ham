@@ -1,0 +1,281 @@
+---
+title: "data607_project4"
+author: "karmaGyatso"
+date: '2022-11-19'
+output: html_document
+---
+
+
+```{r}
+library(tm)
+library(knitr)
+library(dplyr)
+library(wordcloud)
+library(naivebayes)
+library(e1071)
+library(pROC)
+
+```
+
+## Introduction
+
+It can be useful to be able to classify new "test" documents using already classified "training" documents.  A common example is using a corpus of labeled spam and ham (non-spam) e-mails to predict whether or not a new document is spam.  
+
+For this project, you can start with a spam/ham dataset, then predict the class of new documents (either withheld from the training dataset or from another source such as your own spam folder).   One example corpus:   (https://spamassassin.apache.org/old/publiccorpus/ )[https://spamassassin.apache.org/old/publiccorpus/]
+
+## loading files
+
+The number of files are too many to upload in the GitHub. So, I have downloaded the files in the desktop and assigned a path in the variable to load in R.
+```{r}
+pathName_spam <- "/Users/karmagyatso/Documents/cunySps/data607/project4/spam_2"
+file_names_spam <- list.files(pathName_spam)
+
+head(file_names_spam)
+```
+
+```{r}
+length_spam <- length(file_names_spam)
+length_spam
+```
+
+
+```{r}
+pathName_ham <- "/Users/karmagyatso/Documents/cunySps/data607/project4/easy_ham_2"
+file_names_ham <- list.files(pathName_ham)
+
+head(file_names_ham)
+```
+
+```{r}
+length_ham <- length(file_names_ham)
+length_ham
+```
+
+
+
+```{r}
+file_names_spam <- file_names_spam[which(file_names_spam!="cmds")]
+file_names_ham <- file_names_ham[which(file_names_ham!="cmds")]
+```
+
+##corpus creation - processing text data
+```{r}
+easy_ham_corpus <- pathName_ham %>%
+  paste(., list.files(.), sep = "/") %>%
+  lapply(readLines) %>%
+  VectorSource() %>%
+  VCorpus()
+
+easy_ham_corpus
+```
+
+
+```{r}
+spam_corpus <- pathName_spam %>%
+  paste(., list.files(.), sep = "/") %>%
+  lapply(readLines) %>%
+  VectorSource() %>%
+  VCorpus()
+
+spam_corpus
+```
+
+## Cleaning data with Corplus 
+data contains garbage like numbers, puctuation, whitespace. So, first we will remove all the unnecessary data. 
+
+Here we are removing the numbers, puctuation, whitespace, reduce the terms to their stem and remove stop words like to, from and the
+```{r}
+Sys.setlocale("LC_ALL", "C")
+```
+
+```{r}
+# easy ham emails
+easy_ham_corpus <- easy_ham_corpus %>%
+  tm_map(removeNumbers) %>%
+  tm_map(removePunctuation) %>%
+  tm_map(removeWords, stopwords()) %>%
+  tm_map(stripWhitespace) %>%
+  tm_map(stemDocument)
+```
+
+
+
+```{r}
+#spam emails
+spam_corpus <- spam_corpus %>%
+  tm_map(removeNumbers) %>%
+  tm_map(removePunctuation) %>%
+  tm_map(removeWords, stopwords()) %>%
+  tm_map(stripWhitespace) %>%
+  tm_map(stemDocument)
+
+spam_corpus
+```
+
+We have 1401 documents on easy_ham and 1397 documents on spam. Combining these two corpuses. 
+
+```{r}
+ham_or_spam_corpus <- c(easy_ham_corpus, spam_corpus)
+```
+
+```{r}
+ham_or_spam_corpus
+```
+
+##Building a Term Document Matrix
+```{r}
+tdm <- DocumentTermMatrix(ham_or_spam_corpus)
+tdm
+```
+
+##Creating word cloud
+```{r}
+wordcloud(ham_or_spam_corpus, max.words = 100, random.order = FALSE, rot.per=0.15, min.freq=5, colors = brewer.pal(8, "Dark2"))
+```
+
+## Creating Data Frames
+
+Here we are creating a new data frame and unlist all the easy_ham in df_ham and df_spam and combine the data in to one data frame. We can use Naive Bayes classifier to find any key word present in a defined class to predict if the email is spam or ham. 
+
+```{r}
+df_ham <- as.data.frame(unlist(easy_ham_corpus), stringsAsFactors = FALSE)
+df_ham$type <- "ham"
+colnames(df_ham)=c("text", "email")
+
+df_spam <- as.data.frame(unlist(spam_corpus), stringsAsFactors = FALSE)
+df_spam$type <- "spam"
+colnames(df_spam)=c("text", "email")
+
+df_ham_or_spam <- rbind(df_ham, df_spam)
+
+kable(head(df_ham_or_spam))
+```
+
+Splitting the data by 80% as training data and 20% as test data. 
+```{r}
+sample_size <- floor(0.80 * nrow(df_ham_or_spam)) # selecting sample size of 80% of the data for training. 
+
+set.seed(123)
+train <- sample(seq_len(nrow(df_ham_or_spam)), size = sample_size)
+
+train_ham_or_spam <- df_ham_or_spam[train, ]
+test_ham_or_spam <- df_ham_or_spam[-train, ]
+
+kable(head(train_ham_or_spam))
+```
+```{r}
+kable(head(test_ham_or_spam))
+```
+## Corplus
+Corpus is an R text processing package with full support for international text (Unicode). It includes functions for reading data from newline-delimited JSON files, for normalizing and tokenizing text, for searching for term occurrences, and for computing term occurrence frequencies (including n-grams).
+
+Create and Clean Corpus and Create Term Document Matrix for Training and Test Data.
+
+```{r}
+# corpus creation
+train_corpus <- Corpus (VectorSource(train_ham_or_spam$text)) # corpus training data
+test_corpus <- Corpus(VectorSource(test_ham_or_spam$text)) # corpus test data
+
+# corpus cleaning
+train_corpus <- train_corpus %>%
+  tm_map(removeNumbers) %>%
+  tm_map(removePunctuation) %>%
+  tm_map(removeWords, stopwords()) %>%
+  tm_map(stripWhitespace)
+```
+
+```{r}
+test_corpus <- test_corpus %>%
+  tm_map(removeNumbers) %>%
+  tm_map(removePunctuation) %>%
+  tm_map(removeWords, stopwords()) %>%
+  tm_map(stripWhitespace)
+```
+
+```{r}
+train_tdm <- DocumentTermMatrix(train_corpus)
+test_tdm <- DocumentTermMatrix(test_corpus)
+
+train_tdm
+```
+
+
+```{r}
+test_tdm
+```
+
+```{r}
+train_corpus
+```
+
+```{r}
+test_corpus
+```
+
+We need to filter data for training of data. 
+```{r}
+spam <- subset(train_ham_or_spam, email == "spam")
+ham <- subset(train_ham_or_spam, email == "ham")
+```
+
+limitting the observation upto 60 times for now. 
+```{r}
+sixty_times_words<- findFreqTerms(train_tdm, 60)
+length(sixty_times_words)
+
+```
+
+
+## create a classifier for each email
+```{r}
+train_tdm_2<- DocumentTermMatrix(train_corpus, control=list(dictionary = sixty_times_words))
+
+test_tdm_2<- DocumentTermMatrix(test_corpus, control=list(dictionary = sixty_times_words))
+```
+
+```{r}
+train_tdm_3 <- as.matrix(train_tdm_2)
+train_tdm_3 <- as.data.frame(train_tdm_3)
+class(train_tdm_3)
+```
+
+```{r}
+test_tdm_3 <- as.matrix(test_tdm_2)
+test_tdm_3 <- as.data.frame(test_tdm_3)
+class(test_tdm_3)
+```
+
+Training the Naive Bayes classifier-
+```{r}
+classifier <- naiveBayes(train_tdm_3, factor(train_ham_or_spam$email))
+```
+
+
+##testing the model
+```{r}
+test_pred <- predict(classifier, newdata=test_tdm_3)
+```
+
+
+```{r}
+table(predicted=test_pred,actual=test_tdm_3[,1])
+```
+
+```{r}
+
+prednum<-ifelse(test_pred=="spam",1,2)
+
+auc<-roc(as.factor(test_tdm_3[,1]),prednum)
+plot(auc)
+```
+
+```{r}
+auc$auc
+```
+In the ROC curve the area under the curve is 0.5485 which is not a good score and implies that the model recognize text messages as either spam or ham at around 50% accuracy. ROC curve is plotted between Sensitivity-i.e true positive rate(positive classes being classified correctly) vs the Specificity-i.e true negetive rate(negetive classes being clssified correctly)
+
+In the Confusion matrix , the diagonals are the correctly classified examples while the off-diagonals the incorrectly classifiec examples.
+
+##Conclusion
+
+This was a simple article on classifying text messages as ham or spam using some basic natural language processing and then building a naive Bayes text classifier.I urge the readers to implement and use the knowledge acquired from this article in making their own text classifiers and solving different problems related to text processing and NLP etc. Ofcourse,there are various other packages to do text processing and building such models.
